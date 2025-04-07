@@ -60,9 +60,11 @@ float magnitude1[FFT_SIZE / 2];//// 幅度数组
 float magnitude2[FFT_SIZE / 2];
 uint16_t adc_buf1[ADC_BUF_SIZE]={0,0};  // ADC DMA 缓冲区
 uint16_t adc_buf2[ADC_BUF_SIZE];
-float input1_f32[ADC_BUF_SIZE];   // FFT 输入缓冲区
+float input11_f32[ADC_BUF_SIZE];   // FFT 输入缓冲区
+float input12_f32[ADC_BUF_SIZE]; 
 float output1_f32[ADC_BUF_SIZE];  // FFT 计算结果
-float input2_f32[ADC_BUF_SIZE];   
+float input21_f32[ADC_BUF_SIZE];  
+float input22_f32[ADC_BUF_SIZE]; 
 float output2_f32[ADC_BUF_SIZE]; 
 arm_rfft_fast_instance_f32 fft_instance;// 定义 FFT 结构体
 char message[128];               // 串口发送缓冲区
@@ -189,9 +191,9 @@ void calculate_amplitude1(float* rms, float* peak) {//求幅度
     float max_val = 0.0f;
 
     for (int i = 0; i < FFT_SIZE; i++) {
-        sum_sq +=  input1_f32[i] *  input1_f32[i];  // 计算平方和
-        if (fabs( input1_f32[i]) > max_val) {
-            max_val = fabs(input1_f32[i]);  // 找最大值
+        sum_sq +=  input12_f32[i] *  input12_f32[i];  // 计算平方和
+        if (fabs( (float)input12_f32[i]) > max_val) {
+            max_val = fabs((float)input12_f32[i]);  // 找最大值
         }
     }
 
@@ -203,9 +205,9 @@ void calculate_amplitude2(float* rms, float* peak) {//求幅度
     float max_val = 0.0f;
 
     for (int i = 0; i < FFT_SIZE; i++) {
-        sum_sq +=  input2_f32[i] *  input2_f32[i];  // 计算平方和
-        if (fabs( input2_f32[i]) > max_val) {
-            max_val = fabs(input2_f32[i]);  // 找最大值
+        sum_sq +=  input22_f32[i] *  input22_f32[i];  // 计算平方和
+        if (fabs( (float)input22_f32[i]) > max_val) {
+            max_val = fabs((float)input22_f32[i]);  // 找最大值
         }
     }
 
@@ -269,7 +271,7 @@ float find_main_frequency2(void) {// 计算 FFT 结果中的主频率
 void process_signal1() {
     // **执行 FFT**
     arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
-    arm_rfft_fast_f32(&fft_instance, input1_f32,output1_f32, 0);
+    arm_rfft_fast_f32(&fft_instance, input11_f32,output1_f32, 0);
 
     // **计算幅度谱**
     calculate_magnitude1();
@@ -285,15 +287,17 @@ void process_signal1() {
     const char* waveform = identify_waveform1();
 
     // **输出结果**
-    printf("主频: %.2f Hz\n", main_frequency);
+    printf("t0.txt=\"主频: %.2f Hz\"\xff\xff\xff\n", main_frequency);
     printf("均方根幅度: %.2f V\n", rms);
     printf("峰值: %.2f V\n", peak);
     printf("波形类型: %s\n", waveform);
 }
+
 void process_signal2() {
     // **执行 FFT**
     arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
-    arm_rfft_fast_f32(&fft_instance, input2_f32,output2_f32, 0);
+	  
+    arm_rfft_fast_f32(&fft_instance, input21_f32,output2_f32, 0);
 
     // **计算幅度谱**
     calculate_magnitude2();
@@ -314,9 +318,22 @@ void process_signal2() {
     printf("峰值: %.2f V\n", peak);
     printf("波形类型: %s\n", waveform);
 }
-
-
+void trans1(){
+	for(int i=0;i<1024;i++){
+	input11_f32[i]=(float)adc_buf1[i];
+	input12_f32[i]=(float)adc_buf1[i];
+		
+}
+	}
+void trans2(){
+	for(int i=0;i<1024;i++){
+	input21_f32[i]=(float)adc_buf2[i];
+	input22_f32[i]=(float)adc_buf2[i];
+		
+}
+}
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){ //回调函数
+	trans2();
 	process_signal2();
 	/*if(hadc == &hadc1&&STATE==0){
     if(check1[4]<=10){//当CH1没有信号，重新检测
@@ -519,3 +536,4 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+
