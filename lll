@@ -23,6 +23,8 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+#include <math.h>
+
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -42,8 +44,9 @@
 #define SAMPLING_RATE 26667  // 实际采样率，单位 Hz
 #define FFT_SIZE 1024
 #define SAMPLE_RATE 26667
-
-
+#define k 3.846
+#define M_PI 3.1415926
+#define kADC 1086
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -53,6 +56,12 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+int max_index = 0;
+float window[FFT_SIZE];
+float phase1,phase2;
+float amplitude_ratio;
+float rms1, peak1;
+float rms2, peak2;
 int STATE=0;
 uint16_t check1[5]={0,0,0,0,0};
 uint16_t check2[5]={0,0,0,0,0};
@@ -76,6 +85,12 @@ typedef struct {
 SignalInfo signal1;
 SignalInfo signal2;
 float values[3];
+float main_frequency2;//主频
+float main_frequency1;
+const char* waveform1;
+const char* waveform2;
+float phase_diff;
+float thd;
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -93,6 +108,16 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void generate_hanning_window() {
+    for (int i = 0; i < FFT_SIZE; i++) {
+        window[i] = 0.5f * (1.0f - cosf(2 * PI * i / (FFT_SIZE - 1)));
+    }
+}
+void apply_window_and_prepare_fft(float* input, float* output, float* window) {
+    for (int i = 0; i < FFT_SIZE; i++) {
+        output[i] = input[i] * window[i];
+    }
+}
 
 float find_max_frequency1() {
     uint32_t maxIndex;
@@ -132,7 +157,7 @@ const char* identify_waveform1() {
     float fundamental_freq = (fundamental_index * SAMPLE_RATE) / FFT_SIZE;
     
     // 3. 设定谐波判定阈值（基波的10%）
-    float threshold = max_magnitude * 0.1f;
+    float threshold = max_magnitude * 0.3f;
     int harmonic_count = 0;
     
     // 4. 计算谐波个数（从2倍频开始判断）
@@ -152,40 +177,40 @@ const char* identify_waveform1() {
     }
 }
 const char* identify_waveform2() {
-    int fundamental_index = 1;
-    float max_magnitude = magnitude2[1];
-    
-    // 1. 寻找最大幅值对应的索引（主频索引）
+    int harmonic_count = 0;
+
+    // 1. 找到基波索引（跳过直流分量）
+    int base_index = 1;
+    float base_amp = magnitude2[1];
+
     for (int i = 2; i < FFT_SIZE / 2; i++) {
-        if (magnitude2[i] > max_magnitude) {
-            max_magnitude = magnitude2[i];
-            fundamental_index = i;
+        if (magnitude2[i] > base_amp) {
+            base_amp = magnitude2[i];
+            base_index = i;
         }
     }
-    
-    // 2. 计算基波频率
-    float fundamental_freq = (fundamental_index * SAMPLE_RATE) / FFT_SIZE;
-    
-    // 3. 设定谐波判定阈值（基波的10%）
-    float threshold = max_magnitude * 0.1f;
-    int harmonic_count = 0;
-    
-    // 4. 计算谐波个数（从2倍频开始判断）
-    for (int i = 2 * fundamental_index; i < FFT_SIZE / 2; i += fundamental_index) {
-        if (magnitude1[i] > threshold) {
+
+    float threshold = base_amp * 0.05f;
+
+    // 2. 判断谐波（2~5次谐波是否大于阈值）
+    for (int i = 2; i <= 9; i++) {
+        int idx = base_index * i;
+        if (idx >= FFT_SIZE / 2) break;
+        if (magnitude2[idx] > threshold) {
             harmonic_count++;
         }
     }
-    
-    // 5. 波形判断
+
+    // 3. 识别波形
     if (harmonic_count == 0) {
-        return "正弦波"; // 只有基波，没有显著谐波
-    } else if (harmonic_count > 5) {
-        return "方波"; // 方波的谐波较多
+        return "正弦波";
+    } else if (harmonic_count >= 3) {
+        return "方波";
     } else {
-        return "三角波"; // 三角波的谐波衰减较快
+        return "三角波";
     }
 }
+
 void calculate_amplitude1(float* rms, float* peak) {//求幅度
     float sum_sq = 0.0f;
     float max_val = 0.0f;
@@ -198,7 +223,7 @@ void calculate_amplitude1(float* rms, float* peak) {//求幅度
     }
 
     *rms = sqrtf(sum_sq / FFT_SIZE);  // 计算均方根
-    *peak = max_val;                  // 计算峰值
+    *peak = max_val/kADC;                  // 计算峰值
 }
 void calculate_amplitude2(float* rms, float* peak) {//求幅度
     float sum_sq = 0.0f;
@@ -212,7 +237,7 @@ void calculate_amplitude2(float* rms, float* peak) {//求幅度
     }
 
     *rms = sqrtf(sum_sq / FFT_SIZE);  // 计算均方根
-    *peak = max_val;                  // 计算峰值
+    *peak = max_val/kADC;                  // 计算峰值
 }
 void calculate_magnitude1() {// 计算幅度
     for (int i = 0; i < FFT_SIZE / 2; i++) {
@@ -225,12 +250,12 @@ void calculate_magnitude2() {// 计算幅度
     for (int i = 0; i < FFT_SIZE / 2; i++) {
         float real = output2_f32[2 * i];       // 实部
         float imag = output2_f32[2 * i + 1];   // 虚部
-        magnitude1[i] = sqrtf(real * real + imag * imag);  // 计算幅度
+        magnitude2[i] = sqrtf(real * real + imag * imag);  // 计算幅度
     }
 }
 float find_main_frequency1(void) {// 计算 FFT 结果中的主频率
     float max_magnitude = 0.0f;
-    int max_index = 0;
+    max_index = 0;
 
     // 遍历 FFT 结果，找到最大幅值对应的索引
     for (int i = 1; i < FFT_SIZE / 2; i++) { // 只需要遍历一半 (对称性)
@@ -250,7 +275,7 @@ float find_main_frequency1(void) {// 计算 FFT 结果中的主频率
 }
 float find_main_frequency2(void) {// 计算 FFT 结果中的主频率
     float max_magnitude = 0.0f;
-    int max_index = 0;
+    max_index = 0;
 
     // 遍历 FFT 结果，找到最大幅值对应的索引
     for (int i = 1; i < FFT_SIZE / 2; i++) { // 只需要遍历一半 (对称性)
@@ -277,20 +302,19 @@ void process_signal1() {
     calculate_magnitude1();
 
     // **计算主频**
-    float main_frequency = find_main_frequency1();
+    main_frequency1 =k* find_main_frequency1();
 
     // **计算幅度**
-    float rms, peak;
-    calculate_amplitude1(&rms, &peak);
+ 
+    calculate_amplitude1(&rms1, &peak1);
 
     // **识别波形**
-    const char* waveform = identify_waveform1();
+    waveform1 = identify_waveform1();
 
     // **输出结果**
-    printf("t0.txt=\"主频: %.2f Hz\"\xff\xff\xff\n", main_frequency);
-    printf("均方根幅度: %.2f V\n", rms);
-    printf("峰值: %.2f V\n", peak);
-    printf("波形类型: %s\n", waveform);
+    printf("n0.val=%dV\n\xff\xff\xff", (int)main_frequency1);
+    printf("峰值: %.2f V\n", peak1);
+    printf("波形类型: %s\n", waveform1);
 }
 
 void process_signal2() {
@@ -303,20 +327,20 @@ void process_signal2() {
     calculate_magnitude2();
 
     // **计算主频**
-    float main_frequency = find_main_frequency2();
+    main_frequency2 = k*find_main_frequency2();
 
     // **计算幅度**
-    float rms, peak;
-    calculate_amplitude2(&rms, &peak);
+   
+    calculate_amplitude2(&rms2, &peak2);
 
     // **识别波形**
-    const char* waveform = identify_waveform2();
+    waveform2 = identify_waveform2();
 
     // **输出结果**
-    printf("主频: %.2f Hz\n", main_frequency);
-    printf("均方根幅度: %.2f V\n", rms);
-    printf("峰值: %.2f V\n", peak);
-    printf("波形类型: %s\n", waveform);
+   printf("n1.val=%d\xff\xff\xff", (int)main_frequency2);
+    printf("均方根幅度: %.2f V\n", rms2);
+    printf("峰值: %.2f V\n", peak2);
+    printf("波形类型: %s\n", waveform2);
 }
 void trans1(){
 	for(int i=0;i<1024;i++){
@@ -330,11 +354,61 @@ void trans2(){
 	input21_f32[i]=(float)adc_buf2[i];
 	input22_f32[i]=(float)adc_buf2[i];
 		
+  }
 }
+float calculate_amplitude_ratio(float *magnitude1, float *magnitude2, int maxIndex) {
+    float amplitude1 = magnitude1[maxIndex];  // 信号1的幅度
+    float amplitude2 = magnitude2[maxIndex];  // 信号2的幅度
+    
+    // 计算幅度比值
+    if (amplitude2 != 0) {
+        return amplitude1 / amplitude2;  // 返回幅度比值
+    } else {
+        return 0;  // 如果信号2的幅度为0，返回0（避免除零错误）
+    }
 }
+float calculate_phase_diff(float *signal1, float *signal2, int maxIndex) {
+    // 计算信号1和信号2在主频位置的相位
+   phase1 = atan2(signal1[2 * maxIndex + 1], signal1[2 * maxIndex]);
+   phase2 = atan2(signal2[2 * maxIndex + 1], signal2[2 * maxIndex]);
+    
+    // 计算相位差
+    float phase_diff = phase1 - phase2;
+    
+    // 保证相位差在[-π, π]范围内
+    if (phase_diff > M_PI) {
+        phase_diff -= 2 * M_PI;
+    } else if (phase_diff < -M_PI) {
+        phase_diff += 2 * M_PI;
+    }
+    
+    return phase_diff;  // 返回相位差
+}
+
+float calculate_thd(const float* magnitude, int fundamental_index) {
+    float v1 = magnitude[fundamental_index];
+    float sum = 0.0f;
+    for (int i = 2; i <= 6; i++) {
+        int idx = i * fundamental_index;
+        if (idx < FFT_SIZE / 2) {
+            sum += magnitude[idx] * magnitude[idx];
+        }
+    }
+    return sqrtf(sum) / v1 * 100.0f;
+}
+
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){ //回调函数
 	trans2();
+	trans1();
+	for(int i=0;i<FFT_SIZE;i++){
+	printf("%f,%f\n",input11_f32[i],input21_f32[i]);
+	}
+	apply_window_and_prepare_fft(input12_f32,input11_f32,window);
+	apply_window_and_prepare_fft(input22_f32,input21_f32,window);
 	process_signal2();
+  process_signal1();
+	phase_diff=calculate_phase_diff(output1_f32,output2_f32,max_index);
+	amplitude_ratio=calculate_amplitude_ratio(magnitude1,magnitude2, max_index);
 	/*if(hadc == &hadc1&&STATE==0){
     if(check1[4]<=10){//当CH1没有信号，重新检测
 		HAL_ADC_Start_DMA(&hadc1,(uint32_t*)check1,5);
@@ -422,7 +496,9 @@ int main(void)
 	
 	
   /* USER CODE BEGIN 2 */
+	
 	HAL_ADC_Start_DMA(&hadc2,(uint32_t*)adc_buf2,1024);
+		HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,1024);
 	HAL_TIM_Base_Start(&htim2);
   /* USER CODE END 2 */
 
@@ -536,4 +612,3 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-
