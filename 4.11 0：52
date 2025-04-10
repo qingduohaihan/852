@@ -535,8 +535,8 @@ int main(void)
   MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
 	arm_rfft_fast_init_f32(&fft_instance, FFT_SIZE);
-	HAL_ADC_Start_DMA(&hadc2,(uint32_t*)adc_buf2,1024);
-	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,1024);
+	HAL_ADC_Start_DMA(&hadc2,(uint32_t*)adc_buf2,FFT_SIZE);
+	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,FFT_SIZE);
 	HAL_TIM_Base_Start(&htim2);
   /* USER CODE END 2 */
 
@@ -545,11 +545,11 @@ int main(void)
   while (1)
   {
 	if(STATE==1){
-	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,1024);
+	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,FFT_SIZE);
 	}
 	if(STATE==2){
-	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,1024);
-	HAL_ADC_Start_DMA(&hadc2,(uint32_t*)adc_buf2,1024);
+	HAL_ADC_Start_DMA(&hadc1,(uint32_t*)adc_buf1,FFT_SIZE);
+	HAL_ADC_Start_DMA(&hadc2,(uint32_t*)adc_buf2,FFT_SIZE);
 	}
 	if(STATE==3){
 	process_signal1();
