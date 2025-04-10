@@ -434,7 +434,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc){ //回调函数
   process_signal1();
 	if(main_frequency2<1000&&adapt==0){
 		adapt=1;
-	__HAL_TIM_SET_PRESCALER(&htim2,(int)3733333/main_frequency2);
+	__HAL_TIM_SET_PRESCALER(&htim2,(int)3360000/main_frequency2);
     SAMPLING_RATE =2.5*main_frequency2;
 		SAMPLE_RATE =2.5*main_frequency2;
 		
